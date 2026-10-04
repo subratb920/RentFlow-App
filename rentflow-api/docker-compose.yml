@@ -1,0 +1,19 @@
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: rentflow-mongo
+
+    restart: unless-stopped
+
+    ports:
+      - "46171:27017"
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+
+    volumes:
+      - rentflow-mongo-data:/data/db
+
+volumes:
+  rentflow-mongo-data:
