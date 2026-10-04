@@ -1,0 +1,6 @@
+# Child repositories
+rentFlow-ui/
+rentflow-api/
+
+# macOS
+.DS_Store
