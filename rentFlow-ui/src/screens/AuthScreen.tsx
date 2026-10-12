@@ -24,8 +24,8 @@ import useSingleSubmit from "../hooks/useSingleSubmit";
 import { RootStackParamList } from "../navigation/navigationTypes";
 import { isGoogleSignInAvailable } from "../services/googleSignIn";
 
-// Hidden in Expo Go, which can't load the native Google module
-const showGoogle = isGoogleSignInAvailable();
+// Shown but disabled in Expo Go, which can't load the native Google module
+const googleAvailable = isGoogleSignInAvailable();
 
 export default function AuthScreen() {
   const { login, register, loginWithGoogle } = useAuth();
@@ -389,28 +389,30 @@ export default function AuthScreen() {
           </Text>
         </TouchableOpacity>
 
-        {showGoogle && (
-          <>
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>or</Text>
+          <View style={styles.dividerLine} />
+        </View>
 
-            <TouchableOpacity
-              style={[
-                styles.googleButton,
-                isSubmitDisabled && styles.buttonDisabled,
-              ]}
-              onPress={handleGoogle}
-              disabled={isSubmitDisabled}
-            >
-              <Text style={styles.googleIcon}>G</Text>
-              <Text style={styles.googleText}>
-                Continue with Google
-              </Text>
-            </TouchableOpacity>
-          </>
+        <TouchableOpacity
+          style={[
+            styles.googleButton,
+            (isSubmitDisabled || !googleAvailable) && styles.buttonDisabled,
+          ]}
+          onPress={handleGoogle}
+          disabled={isSubmitDisabled || !googleAvailable}
+        >
+          <Text style={styles.googleIcon}>G</Text>
+          <Text style={styles.googleText}>
+            Continue with Google
+          </Text>
+        </TouchableOpacity>
+
+        {!googleAvailable && (
+          <Text style={styles.googleNote}>
+            Google sign-in works in the installed RentFlow app, not in Expo Go.
+          </Text>
         )}
 
         {mode === "login" && (
@@ -614,6 +616,13 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#4285F4",
     marginRight: 12,
+  },
+
+  googleNote: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#9CA3AF",
+    textAlign: "center",
   },
 
   googleText: {
