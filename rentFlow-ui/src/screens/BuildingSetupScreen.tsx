@@ -1,18 +1,21 @@
-import React, { useState } from "react";
-import { StyleSheet, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, StyleSheet, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import Screen from "../components/Screen";
-import BackButton from "../components/BackButton";
 import Title from "../components/Heading";
 import Subtitle from "../components/SubHeading";
 import Label from "../components/Label";
 import TextField from "../components/TextField";
 import Button from "../components/Button";
+import FieldError from "../components/FieldError";
 
 import { RootStackParamList } from "../navigation/navigationTypes";
-import { createBuilding, updateBuilding } from "../api/building.api";
+import { getBuildingById, updateBuilding } from "../api/building.api";
 import { Building } from "../models/Building";
+import { getApiError } from "../api/apiError";
+import useFormReady from "../hooks/useFormReady";
+import useSingleSubmit from "../hooks/useSingleSubmit";
 
 type Props = NativeStackScreenProps<
     RootStackParamList,
@@ -32,102 +35,136 @@ export default function BuildingSetupScreen({
     // Single source of truth: direct Building model state
     const [building, setBuilding] = useState<Building>({
         propertyId,
-        buildingName: "",
+        buildingName: buildingName ?? "",
         numberOfFloors: 0,
         totalUnits: 0,
         unitIds: [],
     });
 
-    const [buildingCreated, setBuildingCreated] = useState(false);
-    const [loading, setLoading] = useState(false);
+    // A building counts as configured once it has units,
+    // matching the status shown on the Buildings list.
+    const [isConfigured, setIsConfigured] = useState(false);
+    const [fetching, setFetching] = useState(!!buildingId);
+    const [loadFailed, setLoadFailed] = useState(false);
+    const { submitting: saving, runSubmit } = useSingleSubmit();
+    const [fieldErrors, setFieldErrors] = useState<
+        Partial<Record<"buildingName" | "numberOfFloors" | "totalUnits", string>>
+    >({});
 
-    const handleSave = async () => {
-        if (!building.buildingName.trim()) return;
+    const isFormReady = useFormReady([
+        building.buildingName,
+        building.numberOfFloors,
+    ]);
 
-        try {
-            setLoading(true);
-
-            // Send the Building state directly to the API
-            const response = await updateBuilding(
-                building.id!,
-                {
-                    buildingName: building.buildingName,
-                    numberOfFloors: building.numberOfFloors,
-                    totalUnits: building.totalUnits,
-                    // isConfigured: true,
-                }
-            );
-
-            const returnedId = response?.id || (response as any)?._id;
-
-            if (returnedId) {
-                setBuilding((prev) => ({ ...prev, id: returnedId }));
-                setBuildingCreated(true);
-            }
-        } catch (error: any) {
-            console.error(
-                "Error creating building:",
-                error?.response?.data || error?.message || error
-            );
-        } finally {
-            setLoading(false);
-        }
+    const updateField = <K extends "buildingName" | "numberOfFloors" | "totalUnits">(
+        field: K,
+        value: Building[K]
+    ) => {
+        setBuilding((prev) => ({ ...prev, [field]: value }));
+        setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
     };
 
-    const handleUpdate = async () => {
-        if (!building.buildingName.trim()) return;
+    useEffect(() => {
+        if (!buildingId) return;
+
+        const loadBuilding = async () => {
+            try {
+                setFetching(true);
+
+                const response = await getBuildingById(buildingId);
+
+                setBuilding(response);
+                setIsConfigured(response.totalUnits > 0);
+                setLoadFailed(false);
+            } catch (error: any) {
+                console.error(
+                    "Error loading building:",
+                    error?.response?.data || error?.message || error
+                );
+
+                setLoadFailed(true);
+
+                Alert.alert(
+                    "Error",
+                    "Could not load this building. Please try again."
+                );
+            } finally {
+                setFetching(false);
+            }
+        };
+
+        loadBuilding();
+    }, [buildingId]);
+
+    const handleUpdate = () => runSubmit(async () => {
+        if (!isFormReady) return;
 
         if (!buildingId) {
-            console.error("Building id is missing.");
+            Alert.alert("Error", "Building id is missing.");
             return;
         }
 
         try {
-            setLoading(true);
-
             const updatedBuilding = await updateBuilding(
                 buildingId,
                 {
-                    buildingName: building.buildingName,
+                    buildingName: building.buildingName.trim(),
                     numberOfFloors: building.numberOfFloors,
                     totalUnits: building.totalUnits,
                 }
             );
 
             setBuilding(updatedBuilding);
-            setBuildingCreated(true);
+            setIsConfigured(updatedBuilding.totalUnits > 0);
 
-            console.log(
-                "Updated Building:",
-                updatedBuilding
+            Alert.alert(
+                "Building Saved",
+                `${updatedBuilding.buildingName} has been saved.`
             );
-        } catch (error: any) {
-            console.error(
-                "Error updating building:",
-                error?.response?.data || error?.message || error
+        } catch (error) {
+            const apiError = getApiError(
+                error,
+                "Could not save this building. Please try again."
             );
-        } finally {
-            setLoading(false);
+
+            if (
+                apiError.field === "buildingName" ||
+                apiError.field === "numberOfFloors" ||
+                apiError.field === "totalUnits"
+            ) {
+                setFieldErrors({ [apiError.field]: apiError.message });
+            } else {
+                Alert.alert("Error", apiError.message);
+            }
         }
-    };
+    });
 
-    const handleCreateFlats = () => {
+    const handleCreateUnits = () => {
         if (!building.id) return;
+
+        // Opened from this building's Units list: return to it rather
+        // than stacking a second copy.
+        const routes = navigation.getState().routes;
+        const previous = routes[routes.length - 2];
+
+        if (
+            previous?.name === "CreateUnits" &&
+            (previous.params as RootStackParamList["CreateUnits"])
+                ?.buildingId === building.id
+        ) {
+            navigation.goBack();
+            return;
+        }
 
         navigation.navigate("CreateUnits", {
             propertyId,
             buildingId: building.id,
-            totalUnits: building.totalUnits,
         });
     };
 
     return (
         <Screen>
             <View style={styles.container}>
-                <BackButton
-                    onPress={() => navigation.goBack()}
-                    style={styles.backButton}
-                />
 
                 <Title style={styles.title}>
                     Building Setup
@@ -137,30 +174,41 @@ export default function BuildingSetupScreen({
                     Configure this building.
                 </Subtitle>
 
+                {fetching ? (
+                    <ActivityIndicator size="large" />
+                ) : (
+                <>
                 <Label style={styles.label}>
-                    Building Name
+                    Building Name *
                 </Label>
 
                 <TextField
                     placeholder="Building A"
                     value={building.buildingName}
+                    hasError={!!fieldErrors.buildingName}
+                    maxLength={60}
                     onChangeText={(text) =>
-                        setBuilding((prev) => ({ ...prev, buildingName: text }))
+                        updateField("buildingName", text)
                     }
                 />
 
+                <FieldError message={fieldErrors.buildingName} />
+
                 <Label style={styles.label}>
-                    Number of Floors
+                    Number of Floors *
                 </Label>
 
                 <TextField
                     placeholder="5"
                     keyboardType="number-pad"
                     value={building.numberOfFloors ? String(building.numberOfFloors) : ""}
+                    hasError={!!fieldErrors.numberOfFloors}
                     onChangeText={(text) =>
-                        setBuilding((prev) => ({ ...prev, numberOfFloors: Number(text) || 0 }))
+                        updateField("numberOfFloors", Number(text) || 0)
                     }
                 />
+
+                <FieldError message={fieldErrors.numberOfFloors} />
 
                 <Label style={styles.label}>
                     Number of Units
@@ -170,30 +218,35 @@ export default function BuildingSetupScreen({
                     placeholder="20"
                     keyboardType="number-pad"
                     value={building.totalUnits ? String(building.totalUnits) : ""}
+                    hasError={!!fieldErrors.totalUnits}
                     onChangeText={(text) =>
-                        setBuilding((prev) => ({ ...prev, totalUnits: Number(text) || 0 }))
+                        updateField("totalUnits", Number(text) || 0)
                     }
                 />
+
+                <FieldError message={fieldErrors.totalUnits} />
 
                 <Button
                     title={
-                        loading
+                        saving
                             ? "Saving..."
-                            : buildingCreated
+                            : isConfigured
                                 ? "Update Building"
-                                : "Create Building"
+                                : "Save Building"
                     }
                     onPress={handleUpdate}
-                    disabled={loading}
+                    disabled={saving || loadFailed || !isFormReady}
                     style={styles.button}
                 />
 
-                {buildingCreated && (
+                {isConfigured && (
                     <Button
-                        title="Create Flats"
-                        onPress={handleCreateFlats}
+                        title="Create Units"
+                        onPress={handleCreateUnits}
                         style={styles.button}
                     />
+                )}
+                </>
                 )}
             </View>
         </Screen>
@@ -203,13 +256,10 @@ export default function BuildingSetupScreen({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        paddingTop: 60,
+        paddingTop: 12,
         paddingBottom: 40,
     },
 
-    backButton: {
-        marginBottom: 24,
-    },
 
     title: {
         marginBottom: 8,

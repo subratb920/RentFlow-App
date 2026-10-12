@@ -3,7 +3,7 @@ import apiClient from "./apiClient";
 import { Building } from "../models/Building";
 
 export async function createBuilding(
-    building: Omit<Building, "id">
+    building: Pick<Building, "propertyId" | "buildingName">
 ): Promise<Building> {
     const response = await apiClient.post(
         "/buildings",
@@ -19,6 +19,14 @@ export async function getBuildingsByProperty(
     const response = await apiClient.get("/buildings", {
         params: { propertyId },
     });
+
+    return response.data;
+}
+
+export async function getBuildingById(
+    id: string
+): Promise<Building> {
+    const response = await apiClient.get(`/buildings/${id}`);
 
     return response.data;
 }

@@ -1,4 +1,5 @@
 import * as buildingService from "../services/building.service.js";
+import { sendError } from "../utils/httpError.js";
 
 /**
  * POST /api/buildings
@@ -6,29 +7,21 @@ import * as buildingService from "../services/building.service.js";
  */
 export async function createBuilding(req, res) {
     try {
-        const { propertyId, buildingName, numberOfFloors, totalUnits } = req.body;
+        const { propertyId, buildingName, numberOfFloors } = req.body;
 
         if (!propertyId) {
             return res.status(400).json({ message: "propertyId is required." });
         }
 
-        if (!buildingName) {
-            return res.status(400).json({ message: "Building name is required." });
-        }
-
         const building = await buildingService.createBuildingForProperty(
             propertyId,
-            {
-                buildingName,
-                numberOfFloors: Number(numberOfFloors) || 1,
-                totalUnits: Number(totalUnits) || 0,
-            }
+            { buildingName, numberOfFloors },
+            req.user.id
         );
 
         res.status(201).json(building);
     } catch (error) {
-        console.error("Error creating building:", error);
-        res.status(500).json({ message: "Failed to create building." });
+        sendError(res, error, "Failed to create building.");
     }
 }
 
@@ -44,12 +37,14 @@ export async function getBuildings(req, res) {
             return res.status(400).json({ message: "propertyId query parameter is required." });
         }
 
-        const buildings = await buildingService.getBuildingsByProperty(propertyId);
+        const buildings = await buildingService.getBuildingsByProperty(
+            propertyId,
+            req.user.id
+        );
 
         res.json(buildings);
     } catch (error) {
-        console.error("Error fetching buildings:", error);
-        res.status(500).json({ message: "Failed to fetch buildings." });
+        sendError(res, error, "Failed to fetch buildings.");
     }
 }
 
@@ -59,38 +54,31 @@ export async function getBuildings(req, res) {
  */
 export async function getBuildingById(req, res) {
     try {
-        const { buildingId } = req.params;
-        const building = await buildingService.getBuildingById(buildingId);
-
-        if (!building) {
-            return res.status(404).json({ message: "Building not found." });
-        }
+        const building = await buildingService.getBuilding(
+            req.params.buildingId,
+            req.user.id
+        );
 
         res.json(building);
     } catch (error) {
-        console.error("Error fetching building:", error);
-        res.status(500).json({ message: "Failed to fetch building." });
+        sendError(res, error, "Failed to fetch building.");
     }
 }
 
+/**
+ * PUT /api/buildings/:id
+ * Updates the building name, number of floors and number of units
+ */
 export async function updateBuilding(req, res) {
     try {
-        const { id } = req.params;
-
-        const updatedBuilding = await buildingService.update(id, req.body);
-
-        if (!updatedBuilding) {
-            return res.status(404).json({
-                message: "Building not found.",
-            });
-        }
+        const updatedBuilding = await buildingService.update(
+            req.params.id,
+            req.body,
+            req.user.id
+        );
 
         res.json(updatedBuilding);
     } catch (error) {
-        console.error("Error updating building:", error);
-
-        res.status(500).json({
-            message: "Failed to update building.",
-        });
+        sendError(res, error, "Failed to update building.");
     }
 }

@@ -8,6 +8,7 @@ import {
 import {
     User,
     Lock,
+    Wallet,
     LogOut,
     ChevronRight,
 } from "lucide-react-native";
@@ -24,6 +25,7 @@ import { useAuth } from "../context/AuthContext";
 import { Colors } from "../theme/colors";
 import { Spacing } from "../theme/spacing";
 import { CS } from "../theme/cs";
+import { UserRole } from "../models/User";
 
 type Props = NativeStackScreenProps<
     RootStackParamList,
@@ -58,6 +60,12 @@ export default function ProfileScreen({
                     {user?.email}
                 </Subtitle>
 
+                {!!user?.phone && (
+                    <Subtitle>
+                        {user.phone}
+                    </Subtitle>
+                )}
+
                 <Subtitle>
                     {user?.role}
                 </Subtitle>
@@ -65,6 +73,29 @@ export default function ProfileScreen({
             </View>
 
             <View style={styles.card}>
+
+                {user?.role === UserRole.OWNER && (
+                    <TouchableOpacity
+                        style={CS.listItem}
+                        onPress={() => navigation.navigate("PaymentSettings")}
+                    >
+                        <View style={CS.listItemLeft}>
+                            <Wallet
+                                size={20}
+                                color={Colors.txtPrimary}
+                            />
+
+                            <Text style={CS.listItemText}>
+                                Payment Settings
+                            </Text>
+                        </View>
+
+                        <ChevronRight
+                            size={20}
+                            color={Colors.txtSecondary}
+                        />
+                    </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                     style={CS.listItem}

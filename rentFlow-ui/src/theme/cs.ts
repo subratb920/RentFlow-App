@@ -40,6 +40,17 @@ export const CS = StyleSheet.create({
         fontSize: 16,
     },
 
+    // Field with a validation error
+    fieldErr: {
+        borderColor: Colors.danger,
+    },
+
+    errTxt: {
+        color: Colors.danger,
+        fontSize: 14,
+        marginTop: 6,
+    },
+
     ta: {
         backgroundColor: Colors.white,
 
@@ -87,15 +98,6 @@ export const CS = StyleSheet.create({
         color: Colors.white,
     },
 
-    backBtn: {
-        marginBottom: 24,
-    },
-
-    backBtnTxt: {
-        fontSize: 18,
-        fontWeight: "600",
-        color: Colors.primary,
-    },
 
     dropdown: {
         backgroundColor: Colors.white,

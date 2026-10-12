@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     Pressable,
     StyleSheet,
     Text,
@@ -10,7 +11,6 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 
 import Screen from "../components/Screen";
-import BackButton from "../components/BackButton";
 import Title from "../components/Heading";
 import Subtitle from "../components/SubHeading";
 import Button from "../components/Button";
@@ -52,6 +52,15 @@ export default function PropertySetupScreen({
     );
 
     const handlePropertyPress = (property: Property) => {
+        // With at least one configured unit the owner manages the
+        // property (edit, assign tenants); before that, setup continues.
+        if ((property.configuredUnits ?? 0) > 0) {
+            navigation.navigate("PropertyDetail", {
+                propertyId: property.id!,
+            });
+            return;
+        }
+
         const propertyType = PROPERTY_TYPES.find(
             (type) => type.value === property.propertyType
         );
@@ -66,18 +75,27 @@ export default function PropertySetupScreen({
             return;
         }
 
-        navigation.navigate("BuildingSetup", {
+        // Non-complex properties have a single building, created
+        // automatically with the property; go straight to its units.
+        const buildingId = property.buildingIds?.[0];
+
+        if (!buildingId) {
+            Alert.alert(
+                "No Building Found",
+                "This property has no building to configure."
+            );
+            return;
+        }
+
+        navigation.navigate("CreateUnits", {
             propertyId: property.id!,
+            buildingId,
         });
     };
 
     return (
         <Screen>
             <View style={styles.container}>
-                <BackButton
-                    onPress={() => navigation.goBack()}
-                    style={styles.backButton}
-                />
 
                 <Title style={styles.title}>
                     Properties
@@ -117,6 +135,12 @@ export default function PropertySetupScreen({
                             <Text style={styles.status}>
                                 Units : {property.totalUnits}
                             </Text>
+
+                            {(property.configuredUnits ?? 0) > 0 && (
+                                <Text style={styles.status}>
+                                    Tenants : {property.tenantCount ?? 0}
+                                </Text>
+                            )}
                         </Pressable>
                     ))
                 )}
@@ -136,13 +160,10 @@ export default function PropertySetupScreen({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        paddingTop: 60,
+        paddingTop: 12,
         paddingBottom: 40,
     },
 
-    backButton: {
-        marginBottom: 24,
-    },
 
     title: {
         marginBottom: 8,

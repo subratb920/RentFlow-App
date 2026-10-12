@@ -2,15 +2,13 @@ import React from "react";
 import {
     View,
     Text,
-    TouchableOpacity,
     StyleSheet,
 } from "react-native";
-import { ChevronLeft } from "lucide-react-native";
-import { useNavigation } from "@react-navigation/native";
+
+import BackButton from "./BackButton";
 
 import { Colors } from "../theme/colors";
 import { Typography } from "../theme/typography";
-import { Spacing } from "../theme/spacing";
 
 type AppHeaderProps = {
     title: string;
@@ -24,24 +22,12 @@ export default function AppHeader({
     rightComponent,
 }: AppHeaderProps) {
 
-    const navigation = useNavigation();
-
     return (
         <View style={styles.container}>
 
             <View style={styles.side}>
 
-                {showBack && (
-                    <TouchableOpacity
-                        onPress={() => navigation.goBack()}
-                        hitSlop={10}
-                    >
-                        <ChevronLeft
-                            size={26}
-                            color={Colors.txtPrimary}
-                        />
-                    </TouchableOpacity>
-                )}
+                {showBack && <BackButton />}
 
             </View>
 
@@ -68,7 +54,6 @@ const styles = StyleSheet.create({
         height: 64,
         flexDirection: "row",
         alignItems: "center",
-        marginBottom: Spacing.lg,
     },
 
     side: {

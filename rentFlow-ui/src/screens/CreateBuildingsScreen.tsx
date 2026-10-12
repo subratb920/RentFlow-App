@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
 import {
+  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -9,14 +10,15 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 
 import Screen from "../components/Screen";
-import BackButton from "../components/BackButton";
 import Title from "../components/Heading";
 import Subtitle from "../components/SubHeading";
 import Button from "../components/Button";
 
 import { RootStackParamList } from "../navigation/navigationTypes";
 import { Building } from "../models/Building";
-import { getBuildingsByProperty } from "../api/building.api";
+import { createBuilding, getBuildingsByProperty } from "../api/building.api";
+import { getApiError } from "../api/apiError";
+import useSingleSubmit from "../hooks/useSingleSubmit";
 
 type Props = NativeStackScreenProps<
   RootStackParamList,
@@ -31,6 +33,7 @@ export default function CreateBuildingsScreen({
 
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [loading, setLoading] = useState(true);
+  const { submitting: adding, runSubmit } = useSingleSubmit();
 
   const loadBuildings = async () => {
     try {
@@ -39,8 +42,6 @@ export default function CreateBuildingsScreen({
       const response = await getBuildingsByProperty(
         propertyId
       );
-
-      console.log("Buildings:", response);
 
       setBuildings(response);
     } catch (error) {
@@ -53,6 +54,44 @@ export default function CreateBuildingsScreen({
     }
   };
 
+  // Configured buildings (with units) open their units; others
+  // open Building Setup first.
+  const openBuilding = (building: Building) => {
+    if (building.totalUnits > 0) {
+      navigation.navigate("CreateUnits", {
+        propertyId,
+        buildingId: building.id!,
+      });
+      return;
+    }
+
+    navigation.navigate("BuildingSetup", {
+      propertyId,
+      buildingId: building.id!,
+      buildingName: building.buildingName,
+    });
+  };
+
+  const handleAddBuilding = () => runSubmit(async () => {
+    try {
+      const building = await createBuilding({
+        propertyId,
+        buildingName: `Building ${buildings.length + 1}`,
+      });
+
+      navigation.navigate("BuildingSetup", {
+        propertyId,
+        buildingId: building.id!,
+        buildingName: building.buildingName,
+      });
+    } catch (error) {
+      Alert.alert(
+        "Could Not Add Building",
+        getApiError(error, "Please try again.").message
+      );
+    }
+  });
+
   useFocusEffect(
     useCallback(() => {
       loadBuildings();
@@ -62,10 +101,6 @@ export default function CreateBuildingsScreen({
   return (
     <Screen>
       <View style={styles.container}>
-        <BackButton
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        />
 
         <Title style={styles.title}>
           Buildings
@@ -88,14 +123,7 @@ export default function CreateBuildingsScreen({
             <Pressable
               key={building.id}
               style={styles.card}
-              onPress={() =>
-                navigation.navigate("BuildingSetup", {
-                  propertyId,
-                  buildingId: building.id!,
-                  buildingName:
-                    building.buildingName,
-                })
-              }
+              onPress={() => openBuilding(building)}
             >
               <Text style={styles.name}>
                 🏢 {building.buildingName}
@@ -109,6 +137,13 @@ export default function CreateBuildingsScreen({
             </Pressable>
           ))
         )}
+
+        <Button
+          title={adding ? "Adding..." : "Add Building"}
+          onPress={handleAddBuilding}
+          disabled={loading || adding}
+          style={styles.button}
+        />
 
         <Button
           title="Continue"
@@ -125,13 +160,10 @@ export default function CreateBuildingsScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
+    paddingTop: 12,
     paddingBottom: 40,
   },
 
-  backButton: {
-    marginBottom: 24,
-  },
 
   title: {
     marginBottom: 8,

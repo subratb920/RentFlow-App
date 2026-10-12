@@ -1,9 +1,8 @@
 import React, { useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Alert, StyleSheet, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import Screen from "../components/Screen";
-import BackButton from "../components/BackButton";
 import Title from "../components/Heading";
 import Subtitle from "../components/SubHeading";
 import Label from "../components/Label";
@@ -15,9 +14,10 @@ import Button from "../components/Button";
 import { PROPERTY_TYPES } from "../constants/propertyTypes";
 import useFormReady from "../hooks/useFormReady";
 import { RootStackParamList } from "../navigation/navigationTypes";
-import { Property } from "../models/Property";
-import { createProperty } from "../api/property.api";
+import { createProperty, CreatePropertyRequest } from "../api/property.api";
 import { useProperty } from "../context/PropertyContext";
+import { getApiError } from "../api/apiError";
+import useSingleSubmit from "../hooks/useSingleSubmit";
 
 type Props = NativeStackScreenProps<
   RootStackParamList,
@@ -28,11 +28,12 @@ export default function CreatePropertyScreen({
   navigation,
 }: Props) {
   const [propertyName, setPropertyName] = useState("");
-  const [propertyId, setPropertyId] = useState("");
   const [propertyType, setPropertyType] = useState("");
   const [numberOfBuildings, setNumberOfBuildings] = useState("");
+  const [numberOfFloors, setNumberOfFloors] = useState("");
   const [numberOfUnits, setNumberOfUnits] = useState("");
   const [address, setAddress] = useState("");
+  const { submitting, runSubmit } = useSingleSubmit();
 
   const selectedPropertyType = PROPERTY_TYPES.find(
     (type) => type.value === propertyType
@@ -40,7 +41,7 @@ export default function CreatePropertyScreen({
 
   const nextStep = selectedPropertyType?.nextStep;
 
-  const { addProperty, selectedProperty, setSelectedProperty } = useProperty();
+  const { addProperty, setSelectedProperty } = useProperty();
 
   const requiresBuildings =
     nextStep === "createBuildings";
@@ -58,12 +59,14 @@ export default function CreatePropertyScreen({
       : []),
 
     ...(requiresUnits
-      ? [Number(numberOfUnits)]
+      ? [Number(numberOfFloors), Number(numberOfUnits)]
       : []),
   ]);
 
-  const handleSave = async () => {
-    const property: Property = {
+  const handleSave = () => runSubmit(async () => {
+    if (!isFormValid) return;
+
+    const property: CreatePropertyRequest = {
       propertyName: propertyName.trim(),
       propertyType,
       address: address.trim(),
@@ -76,73 +79,63 @@ export default function CreatePropertyScreen({
         ? Number(numberOfUnits)
         : 0,
 
+      numberOfFloors: requiresUnits
+        ? Number(numberOfFloors)
+        : 0,
+
       buildingIds: [],
     };
-
-    console.log("Property:", property);
 
     try {
       const createdProperty = await createProperty(property);
 
-      console.log(
-    "Created Property Response:",
-    JSON.stringify(createdProperty, null, 2)
-);
-
       addProperty(createdProperty);
       setSelectedProperty(createdProperty);
 
-      console.log("Created Property:", createdProperty);
-
-
-
+      // replace() so Back from the next step can't return to this
+      // already-submitted form and create the property twice.
       switch (nextStep) {
         case "createBuildings":
-          navigation.navigate("CreateBuildings", {
-            propertyId: createdProperty.id,
+          navigation.replace("CreateBuildings", {
+            propertyId: createdProperty.id!,
             totalBuildings: createdProperty.totalBuildings,
             currentBuilding: 1,
           });
           break;
 
+        // Office units have no separate screen yet; they are set up
+        // through the same units flow as other single buildings.
         case "createUnits":
-          navigation.navigate("CreateUnits", {
-            propertyId,
-            buildingId: "", // We'll need to get the buildingId from the created building later
-            totalUnits: property.totalUnits,
+        case "createOfficeUnits":
+          navigation.replace("CreateUnits", {
+            propertyId: createdProperty.id!,
+            buildingId: createdProperty.buildingIds[0],
           });
           break;
 
-        case "createOfficeUnits":
-          navigation.navigate("CreateOfficeUnits");
-          break;
-
         default:
-          navigation.navigate("Dashboard");
+          navigation.replace("Dashboard");
       }
-
-      // Later we'll use:
-      // const propertyId = createdProperty.id;
     } catch (error) {
       console.error("Create Property Failed:", error);
-      return;
+
+      Alert.alert(
+        "Could Not Create Property",
+        getApiError(error, "Please try again.").message
+      );
     }
-  };
+  });
 
   return (
     <Screen>
       <View style={styles.container}>
-        <BackButton
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        />
 
         <Title style={styles.title}>
           Add Property
         </Title>
 
         <Subtitle style={styles.subtitle}>
-          Create a property to add buildings, flats,
+          Create a property to add buildings, units,
           tenants, rent and monthly bills.
         </Subtitle>
 
@@ -182,6 +175,17 @@ export default function CreatePropertyScreen({
         {requiresUnits && (
           <>
             <Label style={styles.label}>
+              Number of Floors
+            </Label>
+
+            <TextField
+              placeholder="4"
+              keyboardType="number-pad"
+              value={numberOfFloors}
+              onChangeText={setNumberOfFloors}
+            />
+
+            <Label style={styles.label}>
               Number of Units
             </Label>
 
@@ -205,9 +209,9 @@ export default function CreatePropertyScreen({
         />
 
         <Button
-          title="Continue"
+          title={submitting ? "Saving..." : "Continue"}
           onPress={handleSave}
-          disabled={!isFormValid}
+          disabled={!isFormValid || submitting}
           style={styles.button}
         />
       </View>
@@ -218,13 +222,10 @@ export default function CreatePropertyScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
+    paddingTop: 12,
     paddingBottom: 40,
   },
 
-  backButton: {
-    marginBottom: 24,
-  },
 
   title: {
     marginBottom: 8,

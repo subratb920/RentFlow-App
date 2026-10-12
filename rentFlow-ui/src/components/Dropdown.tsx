@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { Dropdown as ElementDropdown } from "react-native-element-dropdown";
 
+import FieldError from "./FieldError";
+
 export type DropdownItem<T extends string = string> = {
   label: string;
   value: T;
@@ -13,6 +15,8 @@ type DropdownProps<T extends string = string> = {
   value: T;
   onChange: (value: T) => void;
   placeholder?: string;
+  error?: string;
+  disabled?: boolean;
 };
 
 export default function Dropdown<T extends string = string>({
@@ -21,6 +25,8 @@ export default function Dropdown<T extends string = string>({
   value,
   onChange,
   placeholder = "Select",
+  error,
+  disabled = false,
 }: DropdownProps<T>) {
   const [isFocus, setIsFocus] = useState(false);
 
@@ -32,7 +38,10 @@ export default function Dropdown<T extends string = string>({
         style={[
           styles.dropdown,
           isFocus && styles.dropdownFocused,
+          !!error && styles.dropdownError,
+          disabled && styles.dropdownDisabled,
         ]}
+        disable={disabled}
         placeholderStyle={styles.placeholder}
         selectedTextStyle={styles.selectedText}
         itemTextStyle={styles.itemText}
@@ -51,6 +60,8 @@ export default function Dropdown<T extends string = string>({
           setIsFocus(false);
         }}
       />
+
+      <FieldError message={error} />
     </View>
   );
 }
@@ -78,6 +89,14 @@ const styles = StyleSheet.create({
 
   dropdownFocused: {
     borderColor: "#2563EB",
+  },
+
+  dropdownError: {
+    borderColor: "#DC2626",
+  },
+
+  dropdownDisabled: {
+    backgroundColor: "#F1F5F9",
   },
 
   placeholder: {

@@ -1,159 +1,366 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Switch } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+    ActivityIndicator,
+    Alert,
+    StyleSheet,
+    Switch,
+    View,
+} from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Picker } from "@react-native-picker/picker";
+import { usePreventRemove } from "@react-navigation/native";
 
 import Screen from "../components/Screen";
-import BackButton from "../components/BackButton";
 import Title from "../components/Heading";
 import Subtitle from "../components/SubHeading";
 import Label from "../components/Label";
 import TextField from "../components/TextField";
+import Dropdown, { DropdownItem } from "../components/Dropdown";
+import FieldError from "../components/FieldError";
 import Button from "../components/Button";
 
 import { RootStackParamList } from "../navigation/navigationTypes";
+import { Building } from "../models/Building";
+import { UnitInput, getFloorLabel, getUnitDisplayName } from "../models/Unit";
+import { UNIT_TYPES } from "../constants/unitTypes";
+import { getBuildingById } from "../api/building.api";
+import { createUnit, getUnitById, updateUnit } from "../api/unit.api";
+import { getApiError } from "../api/apiError";
+import useSingleSubmit from "../hooks/useSingleSubmit";
 
 type Props = NativeStackScreenProps<
     RootStackParamList,
     "UnitSetup"
 >;
 
+type UnitForm = {
+    unitNumber: string;
+    floor: string; // dropdown value; "" until chosen
+    unitType: string;
+    parkingAssigned: boolean;
+    parkingSpotNumber: string;
+};
+
+type UnitField = keyof UnitForm;
+type UnitErrors = Partial<Record<UnitField, string>>;
+
+const EMPTY_FORM: UnitForm = {
+    unitNumber: "",
+    floor: "",
+    unitType: "",
+    parkingAssigned: false,
+    parkingSpotNumber: "",
+};
+
+// Match the API's limits
+const MAX_UNIT_NUMBER_LENGTH = 20;
+const MAX_PARKING_SPOT_LENGTH = 20;
+
+function validate(form: UnitForm): UnitErrors {
+    const errors: UnitErrors = {};
+    const unitNumber = form.unitNumber.trim();
+    const parkingSpotNumber = form.parkingSpotNumber.trim();
+
+    if (!unitNumber) {
+        errors.unitNumber = "Unit number is required.";
+    } else if (unitNumber.length > MAX_UNIT_NUMBER_LENGTH) {
+        errors.unitNumber = `Use ${MAX_UNIT_NUMBER_LENGTH} characters or fewer.`;
+    }
+
+    if (!form.unitType) {
+        errors.unitType = "Select a unit type.";
+    }
+
+    if (form.parkingAssigned && !parkingSpotNumber) {
+        errors.parkingSpotNumber = "Parking spot number is required.";
+    } else if (parkingSpotNumber.length > MAX_PARKING_SPOT_LENGTH) {
+        errors.parkingSpotNumber = `Use ${MAX_PARKING_SPOT_LENGTH} characters or fewer.`;
+    }
+
+    return errors;
+}
+
+function toUnitInput(form: UnitForm): UnitInput {
+    return {
+        unitNumber: form.unitNumber.trim(),
+        floor: form.floor === "" ? null : Number(form.floor),
+        unitType: form.unitType,
+        parkingAssigned: form.parkingAssigned,
+        parkingSpotNumber: form.parkingAssigned
+            ? form.parkingSpotNumber.trim()
+            : "",
+    };
+}
+
 export default function UnitSetupScreen({
     navigation,
     route,
 }: Props) {
     const {
-        propertyId,
         buildingId,
         unitId,
-        unitName,
     } = route.params;
 
-    const [unitNumber, setUnitNumber] = useState("");
-    const [floor, setFloor] = useState("");
-    const [unitType, setUnitType] = useState("2 BHK");
-    const [parkingAssigned, setParkingAssigned] = useState(false);
-    const [parkingSpotNumber, setParkingSpotNumber] = useState("");
+    const isNewUnit = !unitId;
 
-    const handleSave = () => {
-        const unit = {
-            propertyId,
-            buildingId,
-            unitId,
-            unitNumber,
-            floor,
-            unitType,
-            parkingAssigned,
-            parkingSpotNumber:
-                parkingAssigned ? parkingSpotNumber : "",
+    const [building, setBuilding] = useState<Building | null>(null);
+    const [unitName, setUnitName] = useState("New Unit");
+
+    const [form, setForm] = useState<UnitForm>(EMPTY_FORM);
+    const [savedForm, setSavedForm] = useState<UnitForm>(EMPTY_FORM);
+    const [wasConfigured, setWasConfigured] = useState(false);
+
+    const [touched, setTouched] = useState<Partial<Record<UnitField, boolean>>>({});
+    const [serverErrors, setServerErrors] = useState<UnitErrors>({});
+
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
+    const { submitting, runSubmit } = useSingleSubmit();
+    const [saved, setSaved] = useState(false);
+
+    useEffect(() => {
+        const loadUnit = async () => {
+            try {
+                setLoading(true);
+                setLoadError("");
+
+                const [buildingResponse, unitResponse] = await Promise.all([
+                    getBuildingById(buildingId),
+                    unitId ? getUnitById(unitId) : Promise.resolve(null),
+                ]);
+
+                setBuilding(buildingResponse);
+
+                if (unitResponse) {
+                    const loadedForm: UnitForm = {
+                        unitNumber: unitResponse.unitNumber,
+                        floor: unitResponse.floor === null
+                            ? ""
+                            : String(unitResponse.floor),
+                        unitType: unitResponse.unitType,
+                        parkingAssigned: unitResponse.parkingAssigned,
+                        parkingSpotNumber: unitResponse.parkingSpotNumber,
+                    };
+
+                    setForm(loadedForm);
+                    setSavedForm(loadedForm);
+                    setWasConfigured(unitResponse.isConfigured);
+                    setUnitName(getUnitDisplayName(unitResponse));
+                }
+            } catch (error) {
+                console.error("Failed to load unit:", error);
+
+                setLoadError(
+                    getApiError(error, "Could not load this unit.").message
+                );
+            } finally {
+                setLoading(false);
+            }
         };
 
-        console.log("Flat:", unit);
+        loadUnit();
+    }, [buildingId, unitId]);
 
-        // TODO:
-        // Save to backend
+    // Floors run from Ground (0) to numberOfFloors - 1; none until
+    // the building's floors are set.
+    const floorCount = building?.numberOfFloors ?? 0;
 
-        navigation.goBack();
+    const floorOptions = useMemo<DropdownItem[]>(() => {
+        return Array.from({ length: floorCount }, (_, floor) => ({
+            label: getFloorLabel(floor),
+            value: String(floor),
+        }));
+    }, [floorCount]);
+
+    const errors = useMemo(() => validate(form), [form]);
+    const isValid = Object.keys(errors).length === 0;
+
+    const isDirty =
+        JSON.stringify(form) !== JSON.stringify(savedForm);
+
+    // Ask before leaving with unsaved changes (back button,
+    // Android hardware back or swipe).
+    usePreventRemove(
+        isDirty && !saved && !submitting,
+        ({ data }) => {
+            Alert.alert(
+                "Discard changes?",
+                "You have unsaved changes to this unit.",
+                [
+                    { text: "Keep Editing", style: "cancel" },
+                    {
+                        text: "Discard",
+                        style: "destructive",
+                        onPress: () => navigation.dispatch(data.action),
+                    },
+                ]
+            );
+        }
+    );
+
+    // Leave only after the save has cleared the unsaved-changes guard
+    useEffect(() => {
+        if (saved) {
+            navigation.goBack();
+        }
+    }, [saved, navigation]);
+
+    const updateField = <K extends UnitField>(
+        field: K,
+        value: UnitForm[K]
+    ) => {
+        setForm((previous) => ({ ...previous, [field]: value }));
+        setTouched((previous) => ({ ...previous, [field]: true }));
+        setServerErrors((previous) => ({ ...previous, [field]: undefined }));
     };
+
+    const fieldError = (field: UnitField) =>
+        serverErrors[field] ||
+        (touched[field] ? errors[field] : undefined);
+
+    const handleSave = () => runSubmit(async () => {
+        if (!isValid) return;
+
+        try {
+            const input = toUnitInput(form);
+            const savedUnit = unitId
+                ? await updateUnit(unitId, input)
+                : await createUnit(buildingId, input);
+
+            Alert.alert(
+                "Unit Saved",
+                `${getUnitDisplayName(savedUnit)} has been saved.`
+            );
+
+            setSaved(true);
+        } catch (error) {
+            const apiError = getApiError(error, "Could not save this unit.");
+
+            if (apiError.field && apiError.field in EMPTY_FORM) {
+                setServerErrors({
+                    [apiError.field as UnitField]: apiError.message,
+                });
+            } else {
+                Alert.alert("Error", apiError.message);
+            }
+        }
+    });
+
+    const buttonTitle = submitting
+        ? "Saving..."
+        : isNewUnit
+            ? "Create Unit"
+            : wasConfigured
+                ? "Update Unit"
+                : "Save Unit";
 
     return (
         <Screen>
             <View style={styles.container}>
-                <BackButton
-                    onPress={() => navigation.goBack()}
-                    style={styles.backButton}
-                />
 
                 <Title style={styles.title}>
-                    Flat Setup
+                    Unit Setup
                 </Title>
 
                 <Subtitle style={styles.subtitle}>
-                    Configure {unitName}
+                    {building
+                        ? `Configure ${unitName} in ${building.buildingName}`
+                        : `Configure ${unitName}`}
                 </Subtitle>
 
-                <Label style={styles.label}>
-                    Flat Number
-                </Label>
-
-                <TextField
-                    placeholder="101"
-                    value={unitNumber}
-                    onChangeText={setUnitNumber}
-                />
-
-                <Label style={styles.label}>
-                    Floor
-                </Label>
-
-                <View style={styles.pickerContainer}>
-                    <Picker
-                        selectedValue={floor}
-                        onValueChange={(value) => setFloor(value)}
-                    >
-                        <Picker.Item label="Ground" value="Ground" />
-                        <Picker.Item label="1" value="1" />
-                        <Picker.Item label="2" value="2" />
-                        <Picker.Item label="3" value="3" />
-                        <Picker.Item label="4" value="4" />
-                        <Picker.Item label="5" value="5" />
-                        <Picker.Item label="6" value="6" />
-                        <Picker.Item label="7" value="7" />
-                        <Picker.Item label="8" value="8" />
-                        <Picker.Item label="9" value="9" />
-                        <Picker.Item label="10" value="10" />
-                    </Picker>
-                </View>
-
-                <Label style={styles.label}>
-                    Flat Type
-                </Label>
-
-                <View style={styles.pickerContainer}>
-                    <Picker
-                        selectedValue={unitType}
-                        onValueChange={(value) => setUnitType(value)}
-                    >
-                        <Picker.Item label="Studio" value="Studio" />
-                        <Picker.Item label="1 RK" value="1 RK" />
-                        <Picker.Item label="1 BHK" value="1 BHK" />
-                        <Picker.Item label="2 BHK" value="2 BHK" />
-                        <Picker.Item label="3 BHK" value="3 BHK" />
-                        <Picker.Item label="4 BHK" value="4 BHK" />
-                        <Picker.Item label="5 BHK" value="5 BHK" />
-                        <Picker.Item label="Duplex" value="Duplex" />
-                        <Picker.Item label="Penthouse" value="Penthouse" />
-                    </Picker>
-                </View>
-
-                <View style={styles.switchRow}>
-                    <Label>Parking Assigned</Label>
-
-                    <Switch
-                        value={parkingAssigned}
-                        onValueChange={setParkingAssigned}
-                    />
-                </View>
-
-                {parkingAssigned && (
+                {loading ? (
+                    <ActivityIndicator size="large" />
+                ) : loadError ? (
+                    <FieldError message={loadError} />
+                ) : (
                     <>
                         <Label style={styles.label}>
-                            Parking Spot Number
+                            Unit Number *
                         </Label>
 
                         <TextField
-                            placeholder="P-101"
-                            value={parkingSpotNumber}
-                            onChangeText={setParkingSpotNumber}
+                            placeholder="101"
+                            value={form.unitNumber}
+                            hasError={!!fieldError("unitNumber")}
+                            maxLength={MAX_UNIT_NUMBER_LENGTH}
+                            autoCapitalize="characters"
+                            onChangeText={(text) =>
+                                updateField("unitNumber", text)
+                            }
+                        />
+
+                        <FieldError message={fieldError("unitNumber")} />
+
+                        <View style={styles.dropdown}>
+                            <Dropdown
+                                label="Floor"
+                                placeholder={
+                                    floorCount > 0
+                                        ? "Select Floor (optional)"
+                                        : "Set building floors to choose"
+                                }
+                                value={form.floor}
+                                data={floorOptions}
+                                disabled={floorCount === 0}
+                                error={fieldError("floor")}
+                                onChange={(value) =>
+                                    updateField("floor", value)
+                                }
+                            />
+                        </View>
+
+                        <Dropdown
+                            label="Unit Type *"
+                            placeholder="Select Unit Type"
+                            value={form.unitType}
+                            data={UNIT_TYPES}
+                            error={fieldError("unitType")}
+                            onChange={(value) =>
+                                updateField("unitType", value)
+                            }
+                        />
+
+                        <View style={styles.switchRow}>
+                            <Label>Parking Assigned</Label>
+
+                            <Switch
+                                value={form.parkingAssigned}
+                                onValueChange={(value) =>
+                                    updateField("parkingAssigned", value)
+                                }
+                            />
+                        </View>
+
+                        {form.parkingAssigned && (
+                            <>
+                                <Label style={styles.label}>
+                                    Parking Spot Number *
+                                </Label>
+
+                                <TextField
+                                    placeholder="P-101"
+                                    value={form.parkingSpotNumber}
+                                    hasError={!!fieldError("parkingSpotNumber")}
+                                    maxLength={MAX_PARKING_SPOT_LENGTH}
+                                    autoCapitalize="characters"
+                                    onChangeText={(text) =>
+                                        updateField("parkingSpotNumber", text)
+                                    }
+                                />
+
+                                <FieldError
+                                    message={fieldError("parkingSpotNumber")}
+                                />
+                            </>
+                        )}
+
+                        <Button
+                            title={buttonTitle}
+                            onPress={handleSave}
+                            disabled={submitting || !isValid}
+                            style={styles.button}
                         />
                     </>
                 )}
-
-                <Button
-                    title="Create Flat"
-                    onPress={handleSave}
-                    style={styles.button}
-                />
             </View>
         </Screen>
     );
@@ -162,13 +369,10 @@ export default function UnitSetupScreen({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        paddingTop: 60,
+        paddingTop: 12,
         paddingBottom: 40,
     },
 
-    backButton: {
-        marginBottom: 24,
-    },
 
     title: {
         marginBottom: 8,
@@ -184,22 +388,18 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
 
-    pickerContainer: {
-        borderWidth: 1,
-        borderColor: "#D1D5DB",
-        borderRadius: 12,
-        backgroundColor: "#FFFFFF",
-        overflow: "hidden",
+    dropdown: {
+        marginTop: 18,
     },
 
     switchRow: {
-        marginTop: 24,
+        marginTop: 4,
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
     },
 
     button: {
-        marginTop: 40,
+        marginTop: 28,
     },
 });

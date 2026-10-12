@@ -6,22 +6,37 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  KeyboardAvoidingView,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Eye, EyeOff } from "lucide-react-native";
 
 import { useAuth } from "../context/AuthContext";
 import Dropdown from "../components/Dropdown";
 import { UserRole } from "../models/User";
 import { USER_ROLES } from "../constants/userRoles";
+import { getApiError } from "../api/apiError";
+import { resendVerification } from "../api/auth.api";
+import useSingleSubmit from "../hooks/useSingleSubmit";
+import { RootStackParamList } from "../navigation/navigationTypes";
+import { isGoogleSignInAvailable } from "../services/googleSignIn";
+
+// Hidden in Expo Go, which can't load the native Google module
+const showGoogle = isGoogleSignInAvailable();
 
 export default function AuthScreen() {
-  const { login, register } = useAuth();
+  const { login, register, loginWithGoogle } = useAuth();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList, "Auth">>();
 
   const [mode, setMode] = useState<"login" | "register">("login");
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -29,16 +44,30 @@ export default function AuthScreen() {
   const [showConfirmPassword, setShowConfirmPassword] =
     useState(false);
 
-  const [role, setRole] = useState<UserRole>(
-    UserRole.OWNER
-  );
+  // Development builds only: register a dummy email without verification
+  const [dummyEmail, setDummyEmail] = useState(false);
 
-  const handleSubmit = async () => {
+  // No default: the user must pick Owner or Tenant
+  const [role, setRole] = useState<UserRole | "">("");
+
+  // Server message when the account belongs to the other role;
+  // keeps Login disabled until a different role is picked.
+  const [roleError, setRoleError] = useState("");
+
+  const handleRoleChange = (value: UserRole | "") => {
+    setRole(value);
+    setRoleError("");
+  };
+
+  const { submitting, runSubmit } = useSingleSubmit();
+
+  const handleSubmit = () => runSubmit(async () => {
     try {
       if (mode === "register") {
         if (
           !fullName.trim() ||
           !email.trim() ||
+          !phone.trim() ||
           !password ||
           !confirmPassword
         ) {
@@ -57,26 +86,30 @@ export default function AuthScreen() {
           return;
         }
 
-        await register({
+        if (!role) return;
+
+        const result = await register({
           fullName,
           email,
+          phone,
           password,
           role,
+          ...(__DEV__ && dummyEmail && { skipEmailVerification: true }),
         });
 
-        // Clear the form
+        // Clear the form, keeping the email for the login that follows
         setFullName("");
-        setEmail("");
+        setPhone("");
         setPassword("");
         setConfirmPassword("");
-        setRole(UserRole.OWNER);
+        setRole("");
 
         // Switch back to Login
         setMode("login");
 
         Alert.alert(
-          "Success",
-          "Registration successful. Please login."
+          result.verificationRequired ? "Check Your Email" : "Success",
+          result.message
         );
       } else {
         if (!email.trim() || !password) {
@@ -87,29 +120,104 @@ export default function AuthScreen() {
           return;
         }
 
+        if (!role) return;
+
         await login({
           email,
           password,
+          role,
         });
-
-        Alert.alert(
-          "Success",
-          "Login successful."
-        );
       }
     } catch (err) {
-      // console.error(err);
+      const apiError = getApiError(
+        err,
+        "Please check your details and try again."
+      );
+
+      if (apiError.field === "role") {
+        setRoleError(apiError.message);
+        return;
+      }
+
+      if (apiError.code === "EMAIL_NOT_VERIFIED") {
+        showVerifyEmail(apiError.message);
+        return;
+      }
 
       Alert.alert(
-        "Authentication Failed",
-        "Please check your credentials and try again."
+        mode === "login"
+          ? "Login Failed"
+          : "Registration Failed",
+        apiError.message
       );
     }
+  });
+
+  const showVerifyEmail = (message: string) => {
+    Alert.alert("Verify Your Email", message, [
+      { text: "OK", style: "cancel" },
+      {
+        text: "Resend Email",
+        onPress: async () => {
+          try {
+            await resendVerification(email);
+
+            Alert.alert(
+              "Email Sent",
+              "Check your inbox (and spam folder) for the new link."
+            );
+          } catch (resendError) {
+            Alert.alert(
+              "Error",
+              getApiError(resendError, "Could not send the email.").message
+            );
+          }
+        },
+      },
+    ]);
   };
+
+  const handleGoogle = () => runSubmit(async () => {
+    if (!role) return;
+
+    try {
+      const profileStep = await loginWithGoogle(role);
+
+      if (profileStep) {
+        navigation.navigate("CompleteProfile", {
+          signupToken: profileStep.signupToken,
+          fullName: profileStep.profile.fullName,
+          email: profileStep.profile.email,
+        });
+      }
+    } catch (err) {
+      const apiError = getApiError(
+        err,
+        "Google sign-in failed. Please try again."
+      );
+
+      if (apiError.field === "role") {
+        setRoleError(apiError.message);
+        return;
+      }
+
+      Alert.alert("Google Sign-In Failed", apiError.message);
+    }
+  });
+
+  const isSubmitDisabled = submitting || !role || !!roleError;
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
+      {/* Scrollable so the Login button stays reachable above the keyboard */}
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior="padding"
+      >
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.brand}>RentFlow</Text>
 
         <Text style={styles.heading}>
@@ -147,6 +255,20 @@ export default function AuthScreen() {
           onChangeText={setEmail}
           placeholder="john@example.com"
         />
+
+        {mode === "register" && (
+          <>
+            <Text style={styles.label}>Phone Number</Text>
+
+            <TextInput
+              style={styles.input}
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="98765 43210"
+            />
+          </>
+        )}
 
         <Text style={styles.label}>Password</Text>
 
@@ -218,26 +340,78 @@ export default function AuthScreen() {
               </TouchableOpacity>
             </View>
 
-            <Dropdown
-              label="Role"
-              placeholder="Select Role"
-              value={role}
-              data={USER_ROLES}
-              onChange={setRole}
-            />
           </>
         )}
 
+        {__DEV__ && mode === "register" && (
+          <TouchableOpacity
+            style={styles.devOption}
+            onPress={() => setDummyEmail(!dummyEmail)}
+          >
+            <View
+              style={[
+                styles.checkbox,
+                dummyEmail && styles.checkboxChecked,
+              ]}
+            >
+              {dummyEmail && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+
+            <Text style={styles.devOptionText}>
+              Dev: dummy email, skip verification
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        <Dropdown
+          label="Role"
+          placeholder="Select Role"
+          value={role}
+          data={USER_ROLES}
+          onChange={handleRoleChange}
+          error={roleError}
+        />
+
         <TouchableOpacity
-          style={styles.button}
+          style={[
+            styles.button,
+            isSubmitDisabled && styles.buttonDisabled,
+          ]}
           onPress={handleSubmit}
+          disabled={isSubmitDisabled}
         >
           <Text style={styles.buttonText}>
-            {mode === "login"
-              ? "Login"
-              : "Create Account"}
+            {submitting
+              ? "Please wait..."
+              : mode === "login"
+                ? "Login"
+                : "Create Account"}
           </Text>
         </TouchableOpacity>
+
+        {showGoogle && (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.googleButton,
+                isSubmitDisabled && styles.buttonDisabled,
+              ]}
+              onPress={handleGoogle}
+              disabled={isSubmitDisabled}
+            >
+              <Text style={styles.googleIcon}>G</Text>
+              <Text style={styles.googleText}>
+                Continue with Google
+              </Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         {mode === "login" && (
           <TouchableOpacity
@@ -257,13 +431,14 @@ export default function AuthScreen() {
           </Text>
 
           <TouchableOpacity
-            onPress={() =>
+            onPress={() => {
+              setRoleError("");
               setMode(
                 mode === "login"
                   ? "register"
                   : "login"
-              )
-            }
+              );
+            }}
           >
             <Text style={styles.link}>
               {mode === "login"
@@ -272,7 +447,8 @@ export default function AuthScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -284,7 +460,7 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: 28,
   },
@@ -352,10 +528,98 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+
   buttonText: {
     color: "#FFFFFF",
     fontSize: 17,
     fontWeight: "600",
+  },
+
+  devOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 16,
+    marginBottom: 4,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "#F59E0B",
+    backgroundColor: "#FFFBEB",
+  },
+
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#D97706",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+
+  checkboxChecked: {
+    backgroundColor: "#D97706",
+  },
+
+  checkmark: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  devOptionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#92400E",
+  },
+
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 20,
+  },
+
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#E5E7EB",
+  },
+
+  dividerText: {
+    marginHorizontal: 12,
+    fontSize: 14,
+    color: "#9CA3AF",
+  },
+
+  googleButton: {
+    marginTop: 20,
+    height: 54,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#FFFFFF",
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  googleIcon: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#4285F4",
+    marginRight: 12,
+  },
+
+  googleText: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#111827",
   },
 
   forgotPassword: {

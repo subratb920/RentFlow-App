@@ -10,6 +10,18 @@ const apiClient = axios.create({
     },
 });
 
+let unauthorizedHandler: (() => void) | null = null;
+
+/**
+ * Registers the callback run when an authenticated request is
+ * rejected with 401 (expired or invalid token).
+ */
+export function setUnauthorizedHandler(
+    handler: (() => void) | null
+) {
+    unauthorizedHandler = handler;
+}
+
 apiClient.interceptors.request.use(
     async (config) => {
         const token = await getToken();
@@ -21,6 +33,23 @@ apiClient.interceptors.request.use(
         return config;
     },
     (error) => Promise.reject(error)
+);
+
+apiClient.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        // A 401 without a token (e.g. wrong password on login) is not
+        // a session expiry, so only react when a token was sent.
+        if (
+            axios.isAxiosError(error) &&
+            error.response?.status === 401 &&
+            error.config?.headers?.Authorization
+        ) {
+            unauthorizedHandler?.();
+        }
+
+        return Promise.reject(error);
+    }
 );
 
 export default apiClient;

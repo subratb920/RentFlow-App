@@ -2,7 +2,7 @@ import { Router } from "express";
 
 import { createProperty } from "../controllers/property.controller.js";
 import { authenticate } from "../middleware/auth.middleware.js";
-import { getProperties } from "../controllers/property.controller.js";
+import { getProperties, updateProperty } from "../controllers/property.controller.js";
 
 const router = Router();
 
@@ -17,5 +17,7 @@ router.get(
     authenticate,
     getProperties
 );
+
+router.put("/:id", authenticate, updateProperty);
 
 export default router;

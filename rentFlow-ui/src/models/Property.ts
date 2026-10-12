@@ -9,4 +9,8 @@ export interface Property {
     totalUnits: number;
 
     buildingIds: string[];
+
+    // Included in the owner's property list
+    configuredUnits?: number;
+    tenantCount?: number;
 }
